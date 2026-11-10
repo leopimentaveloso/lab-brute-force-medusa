@@ -1,3 +1,5 @@
+🌐 **Languages:** [Português](README.md) | [English](README.en.md) | [Español](README.es.md)
+
 # 🛡️ Laboratório de Cibersegurança: Simulação de Ataques de Força Bruta e Mitigações com Medusa
 
 Projeto prático desenvolvido como parte do bootcamp **Santander - Cibersegurança do Zero à Prática** na plataforma [DIO](https://dio.me).
