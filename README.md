@@ -20,30 +20,27 @@ Projeto prático desenvolvido como parte do bootcamp **Santander - Ciberseguran�
 
 ---
 
-## 🖥️ Topologia do Ambiente
+## 🖥️ Configuração do Ambiente e Reconhecimento Inicial
 
+### Topologia da Rede
 | Máquina Virtual | Sistema Operacional | Papel / Função | Endereço IP |
 | :--- | :--- | :--- | :--- |
 | **Atacante** | Kali Linux | Execução dos testes e auditoria | `192.168.56.102` |
 | **Alvo** | Metasploitable 2 | Hospedagem dos serviços vulneráveis | `192.168.56.101` |
 
----
-
-## 📂 Cenário 1: Força Bruta no Serviço FTP (Porta 21)
-
-O protocolo FTP (*File Transfer Protocol*) em sua forma tradicional transmite credenciais em texto claro e, quando associado a senhas fracas ou falta de bloqueio de tentativas, torna-se um vetor crítico de intrusão.
+Ambas as máquinas foram configuradas em rede interna exclusiva no VirtualBox (*Host-Only Network*).
 
 ---
 
-### Passo 1: Configuração do Ambiente no VirtualBox
-Inicialização e verificação das duas máquinas virtuais configuradas em rede interna exclusiva (*Host-Only*).
+### Etapa 1: Inicialização do Ambiente no VirtualBox
+Inicialização e verificação das duas máquinas virtuais em execução na rede isolada.
 
 ![Configuração das VMs no VirtualBox](images/ambiente-controlado-metasploitable-kali.png)
 
 ---
 
-### Passo 2: Descoberta do IP da Máquina Alvo
-No terminal da máquina vulnerável (Metasploitable 2), foi verificado o endereço IP atribuído:
+### Etapa 2: Identificação do Endereço IP do Alvo
+No console da máquina vulnerável (Metasploitable 2), foi verificado o endereço IP atribuído:
 
 ```bash
 ip a
@@ -54,33 +51,38 @@ ip a
 
 ---
 
-### Passo 3: Teste de Conectividade
-A partir da máquina atacante (Kali Linux), foi executado um teste de ping para garantir comunicação direta com o alvo:
+### Etapa 3: Teste de Conectividade de Rede
+A partir da máquina atacante (Kali Linux), foi executado um teste de ping para garantir comunicação com o alvo:
 
 ```bash
 ping -c 4 192.168.56.101
 ```
-- `-c 4`: Limita o envio a 4 pacotes ICMP.
 
 ![Teste de Ping](images/teste-ping-atacante-alvo.png)
 
 ---
 
-### Passo 4: Enumeração de Portas e Serviços (Nmap)
-Varredura direcionada para identificar as versões dos serviços ativos nas portas de interesse:
+### Etapa 4: Enumeração de Portas e Serviços (Nmap)
+Varredura direcionada para identificar as versões dos serviços ativos nas portas que serão objeto dos testes de intrusão:
 
 ```bash
 nmap -sV -p 21,22,80,445,139 -n 192.168.56.101
 ```
 - `-sV`: Detecta a versão dos serviços em execução.
-- `-p 21,22,80,445,139`: Escaneia especificamente as portas dos serviços sob análise.
-- `-n`: Desativa a resolução reversa de DNS (otimiza a velocidade do scan em laboratórios isolados).
+- `-p 21,22,80,445,139`: Escaneia especificamente os serviços em análise (FTP, SSH, HTTP e SMB).
+- `-n`: Desativa a resolução reversa de DNS para otimizar o tempo de resposta na rede local.
 
 ![Varredura Nmap](images/enumeracao-alvo.png)
 
 ---
 
-### Passo 5: Validação Manual do Serviço FTP
+## 📂 Cenário 1: Força Bruta no Serviço FTP (Porta 21)
+
+O protocolo FTP (*File Transfer Protocol*) em sua forma tradicional transmite credenciais em texto claro e, quando associado a senhas fracas ou falta de bloqueio de tentativas, torna-se um vetor crítico de intrusão.
+
+---
+
+### Passo 1: Validação Manual do Serviço FTP
 Confirmação de que o serviço FTP na porta 21 estava ativo e aceitando conexões de rede:
 
 ```bash
@@ -91,7 +93,7 @@ ftp 192.168.56.101
 
 ---
 
-### Passo 6: Criação das Wordlists Personalizadas
+### Passo 2: Criação das Wordlists Personalizadas
 Geração de listas personalizadas contendo candidatos a usuários e senhas para o teste:
 
 ```bash
@@ -106,7 +108,7 @@ echo -e "123456\npassword\nqwerty\nmsfadmin" > pass.txt
 
 ---
 
-### Passo 7: Conferência dos Arquivos de Wordlist
+### Passo 3: Conferência dos Arquivos de Wordlist
 Visualização do conteúdo das listas criadas com o comando `cat`:
 
 ```bash
@@ -118,7 +120,7 @@ cat pass.txt
 
 ---
 
-### Passo 8: Ataque de Força Bruta com Medusa
+### Passo 4: Ataque de Força Bruta com Medusa
 Execução do ataque automatizado de força bruta contra o serviço FTP:
 
 ```bash
@@ -136,13 +138,13 @@ medusa -h 192.168.56.101 -U users.txt -P pass.txt -M ftp -t 6 -f
 
 ---
 
-### Passo 9: Validação das Credenciais Obtidas
+### Passo 5: Validação das Credenciais Obtidas
 Teste prático de autenticação no serviço FTP com as credenciais descobertas pelo Medusa (`msfadmin:msfadmin`):
 
 ```bash
 ftp 192.168.56.101
 ```
-> **Resultado:** Acesso autorizado concedido com sucesso ao servidor FTP.
+> **Resultado:** Acesso autorizado concedido com sucesso ao console FTP do servidor alvo.
 
 ![Login com Credenciais Obtidas](images/teste-credenciais-obtidas-medusa-ftp.png)
 
