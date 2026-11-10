@@ -150,18 +150,6 @@ ftp 192.168.56.101
 
 ---
 
-## 🛡️ Medidas de Mitigação para o Serviço FTP
-
-Do ponto de vista de segurança defensiva (*Blue Team*), as seguintes contramedidas devem ser aplicadas:
-
-1. **Desativação de Serviços Desnecessários (Redução da Superfície de Ataque):** Caso o serviço FTP não seja estritamente necessário para as operações da organização, ele deve ser desativado ou desinstalado. Manter portas e serviços ociosos abertos amplia riscos desnecessários.
-2. **Substituição por Protocolos Criptografados:** Descontinuar o uso do FTP clássico (que trafega credenciais em texto claro) e migrar para **SFTP** (via SSH) ou **FTPS** (com criptografia TLS/SSL).
-3. **Prevenção de Ataques de Força Bruta (Fail2ban / Rate Limiting):** Configurar ferramentas de proteção ativa para monitorar os logs e banir temporariamente endereços IP que excedam limites de tentativas inválidas consecutivas (ex.: 3 a 5 falhas).
-4. **Políticas Rígidas de Senhas e Adoção de MFA:** Exigir senhas longas e complexas, proibir credenciais padrão do sistema (como `msfadmin:msfadmin`) e implementar, prioritariamente, **Autenticação Multifator (MFA)** como camada adicional de verificação.
-5. **Segmentação de Rede e Firewall:** Isolar o serviço através de regras de firewall, liberando a porta apenas para endereços IP e dispositivos previamente autorizados (*whitelist*).
-
----
-
 ## 📂 Cenário 2: Força Bruta em Formulário Web (DVWA - Porta 80)
 
 Portais de autenticação web são alvos frequentes em auditorias de segurança. Quando desprovidos de mecanismos de controle de taxa, desafios humanos ou tokens de sessão, tornam-se vulneráveis a ataques automatizados de dicionário e força bruta.
@@ -269,14 +257,137 @@ Com as credenciais identificadas pelo Hydra, foi realizado o login prático no p
 
 ---
 
-## 🛡️ Medidas de Mitigação para Aplicações Web
+## 📂 Cenário 3: Ataque em Cadeia — Enumeração e Password Spraying em SMB (Portas 139/445)
 
-Formulários de autenticação em produção não devem ser simples como o do laboratório. Devem ser implementadas as seguintes defesas em camadas (*Defense in Depth*):
+O protocolo SMB (*Server Message Block*) é amplamente utilizado em ambientes corporativos para compartilhamento de arquivos e impressoras. No entanto, configurações permissivas (como permissão de sessões nulas ou enumeração anônima) permitem que um invasor descubra usuários válidos da rede e execute ataques de *Password Spraying* (pulverização de senhas fracas comuns contra múltiplas contas, com o objetivo de evitar o bloqueio por tentativas consecutivas).
 
-1. **Tokens Anti-CSRF Dinâmicos e Validação de Sessão Estrita:** Implementar bibliotecas com tokens de valor único por sessão (CSRF tokens) atrelados a cookies de navegação obrigatórios, impedindo que requisições diretas de ferramentas automáticas sejam aceitas sem carregar previamente a página.
-2. **Desafios Interativos (CAPTCHA):** Inserir soluções como Cloudflare Turnstile ou Google reCAPTCHA para exigir verificação humana após tentativas consecutivas inválidas.
-3. **Limitação de Taxa por IP (Rate Limiting) e Bloqueio Temporário:** Estabelecer limites máximos de tentativas por endereço IP e por conta de usuário (ex.: 5 tentativas por minuto), aplicando bloqueio temporário progressivo em caso de excesso.
-4. **Atraso Progressivo na Resposta (*Tarpitting* / Backoff Exponencial):** Aumentar artificialmente o tempo de resposta do servidor a cada erro consecutivo (ex.: 1ª falha responde em 0.2s, 2ª em 2s, 3ª em 5s), inviabilizando a velocidade necessária para ataques automatizados.
-5. **Autenticação Multifator (MFA):** Exigir uma segunda camada de autenticação (aplicativo autenticador, chave FIDO2 ou token OTP), neutralizando ataques mesmo quando a senha é descoberta.
-6. **Monitoramento de Logs com Alertas em Tempo Real (SIEM / SOC):** Configurar o envio de logs de erros HTTP em rajada (como as 16 requisições em 2 segundos) para sistemas SIEM, gerando alertas automáticos imediatos para a equipe de monitoramento de segurança (*Blue Team*).
-7. **Respostas Genéricas de Erro:** Utilizar mensagens neutras como *"Usuário ou senha inválidos"*, sem especificar qual dos dois campos falhou, prevenindo a enumeração de usuários válidos.
+---
+
+### Passo 1: Enumeração de Usuários e Compartilhamentos (enum4linux)
+Para mapear os usuários legítimos do domínio/servidor sem disparar alertas de autenticação, foi utilizada a ferramenta **enum4linux**, salvando todo o log de saída em arquivo de texto através do comando `tee`:
+
+```bash
+enum4linux -a 192.168.56.101 | tee enum4_output.txt
+```
+- `-a`: Executa todas as opções de enumeração disponíveis (usuários, compartilhamentos, políticas de senha e grupos).
+- `| tee enum4_output.txt`: Exibe o resultado no terminal e grava simultaneamente no arquivo de texto para análise posterior.
+
+![Execução do enum4linux - Parte 1](images/enumeracao-smb-alvo-1.png)
+![Execução do enum4linux - Parte 2](images/enumeracao-smb-alvo-2.png)
+
+---
+
+### Passo 2: Triagem e Análise dos Dados Obtidos
+Com o utilitário `less`, foi analisado o arquivo de log para filtrar os nomes de contas de usuários reais encontrados no alvo:
+
+```bash
+less enum4_output.txt
+```
+
+![Análise dos Resultados - Usuários Mapeados 1](images/analise-usernames-smb-1.png)
+![Análise dos Resultados - Usuários Mapeados 2](images/analise-usernames-smb-2.png)
+![Análise dos Resultados - Usuários Mapeados 3](images/analise-usernames-smb-3.png)
+![Análise dos Resultados - Usuários Mapeados 4](images/analise-usernames-smb-4.png)
+
+---
+
+### Passo 3: Criação e Verificação das Wordlists para Password Spraying
+A partir dos usuários identificados (`user`, `msfadmin`, `service`), foram estruturadas wordlists direcionadas contendo as credenciais mapeadas e senhas comuns de teste:
+
+```bash
+# Criação da wordlist de usuários descobertos
+echo -e "user\nmsfadmin\nservice" > smb_users.txt
+
+# Criação da wordlist de senhas para pulverização
+echo -e "password\n123456\nWelcome123\nmsfadmin" > senhas_spray.txt
+
+# Conferência dos arquivos
+cat smb_users.txt
+cat senhas_spray.txt
+```
+
+![Criação e Conferência das Wordlists SMB](images/criacao-wordlists-users-passwords-smb.png)
+
+---
+
+### Passo 4: Ataque com Medusa (Módulo smbnt)
+Execução do ataque automatizado utilizando o módulo NTLM do Medusa para o protocolo SMB:
+
+```bash
+medusa -h 192.168.56.101 -U smb_users.txt -P senhas_spray.txt -M smbnt -t 2 -T 50
+```
+
+**Parâmetros explicados:**
+- `-h 192.168.56.101`: Endereço IP do host alvo.
+- `-U smb_users.txt`: Lista de usuários identificados na etapa de enumeração.
+- `-P senhas_spray.txt`: Lista de senhas potenciais para teste.
+- `-M smbnt`: Módulo do Medusa para autenticação SMB/NTLM.
+- `-t 2`: Limite de 2 threads simultâneas para reduzir ruído de rede.
+- `-T 50`: Ajuste de temporização/taxa de pacotes para mitigar travamento no serviço de rede.
+
+> **Resultado:** Identificação bem-sucedida do par de credenciais válido para o serviço de compartilhamento:  
+> **`ACCOUNT FOUND: [smbnt] Host: 192.168.56.101 User: msfadmin Password: msfadmin [SUCCESS]`**
+
+![Execução do Medusa contra SMB](images/ataque-medusa-smb.png)
+
+---
+
+### Passo 5: Teste Negativo e Validação Prática com smbclient
+Para comprovar a precisão do teste, foram executadas duas validações utilizando a ferramenta nativa `smbclient`:
+1. **Teste Negativo (Falha deliberada):** Tentativa de conexão fornecendo uma senha aleatória incorreta, resultando em recusa de acesso imediata (`NT_STATUS_LOGON_FAILURE`).
+2. **Teste Positivo (Sucesso com credencial obtida):** Conexão utilizando as credenciais auditadas (`msfadmin:msfadmin`).
+
+```bash
+# Validação das credenciais e listagem de compartilhamentos
+smbclient -L //192.168.56.101 -U msfadmin
+```
+
+> **Resultado:** Listagem autorizada de todos os compartilhamentos administrativos e pastas de rede do servidor (`IPC$`, `print$`, `opt`, etc.).
+
+![Validação de Acesso via smbclient](images/teste-aleatorio-teste-credenciais-obtidas-medusa-smb.png)
+
+---
+
+## 🛡️ Matriz de Mitigação e Defesa em Camadas (Blue Team)
+
+Para neutralizar os vetores de ataque explorados em todos os cenários auditados (FTP, Web e SMB), recomenda-se a aplicação das seguintes salvaguardas baseadas no princípio de **Defesa em Profundidade (*Defense in Depth*)**:
+
+### 1. Controles Globais de Identidade e Acesso
+- **Autenticação Multifator (MFA):** Implantação obrigatória de MFA em todas as interfaces de autenticação externas e internas, anulando a eficácia de senhas capturadas por força bruta.
+- **Políticas Rígidas de Senhas e Expiração Periódica:** Exigência de senhas longas (mínimo de 12 a 16 caracteres), combinando letras, números e símbolos, associadas à verificação automática contra listas conhecidas de senhas vazadas.
+- **Políticas Inteligentes de Bloqueio de Contas (Account Lockout):** Bloqueio temporário (ex.: 15 a 30 minutos) após 3 a 5 tentativas inválidas consecutivas, impedindo rajadas de teste sem causar negação de serviço definitiva (*DoS*).
+
+### 2. Monitoramento Ativo e Detecção com IA (SIEM / SOC)
+- **Monitoramento de Logs e Comportamento Anômalo:** Centralização de logs de autenticação em um SIEM corporativo. O uso de mecanismos baseados em Inteligência Artificial / *Machine Learning* permite detectar comportamentos anômalos característicos de *Password Spraying* (uma única senha sendo testada contra diversos usuários em intervalos espaçados).
+- **Detecção e Resposta Automatizada:** Bloqueio dinâmico no firewall de endereços IP que apresentem atividade de varredura ou tentativas massivas de login.
+
+### 3. Hardening e Segmentação de Rede
+- **Segmentação e Isolamento por Firewall:** Manter serviços sensíveis (como SMB nas portas 139/445 e FTP) restritos a zonas de rede isoladas (*VLANs* administrativas), sem qualquer exposição direta à internet ou a redes de convidados.
+- **Desativação de Protocolos Legados:** Descontinuar o uso de protocolos inseguros sem criptografia nativa:
+  - Desativar o **FTP** em favor do **SFTP/FTPS**.
+  - Desativar versões obsoletas do **SMB (como SMBv1)** e exigir assinaturas digitais obrigatórias (*SMB Signing* e criptografia nativa SMBv3).
+- **Bloqueio de Enumeração Anônima (*Null Sessions*):** Configurar o serviço Samba/Windows para rejeitar conexões de convidados anônimos (`restrictanonymous = 2`), impedindo que ferramentas como o `enum4linux` listem os nomes dos usuários do sistema.
+
+### 4. Governança e Auditorias Regulares
+- **Varreduras Periódicas de Vulnerabilidades:** Realização rotineira de auditorias internas de segurança (*Vulnerability Assessment*) para identificar serviços ociosos, portas esquecidas e senhas padrão de fábrica antes que invasores o façam.
+- **Redução da Superfície de Ataque:** Desativar qualquer serviço ou porta que não desempenhe função essencial nas operações de negócio.
+
+---
+
+## 📚 Conclusão do Laboratório
+
+A realização deste laboratório prático permitiu vivenciar o ciclo completo de uma auditoria técnica de segurança:
+1. **Fase de Reconhecimento:** Mapeamento de portas abertas com Nmap e enumeração de usuários com enum4linux.
+2. **Fase de Exploração Controlada:** Simulação de ataques de força bruta direta e direcionada contra FTP, Web e SMB, utilizando Medusa e THC-Hydra.
+3. **Fase de Validação e Pensamento Crítico:** Diagnóstico prático de limitações de ferramentas, diferenciação de falsos positivos gerados por redirecionamentos HTTP e validação com acessos legítimos.
+4. **Fase de Remediação:** Elaboração de um plano defensivo técnico e estratégico, demonstrando que a segurança efetiva não depende de uma única solução, mas da integração equilibrada entre controles técnicos, monitoramento contínuo e conscientização.
+
+---
+
+## 🔗 Referências
+
+- [DIO - Digital Innovation One](https://dio.me)
+- [Documentação Oficial do Medusa](http://foofus.net/goons/jmk/medusa/medusa.html)
+- [Repositório Oficial do THC-Hydra](https://github.com/vanhauser-thc/thc-hydra)
+- [Guia do enum4linux - Kali Tools](https://www.kali.org/tools/enum4linux/)
+- [OWASP - Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
